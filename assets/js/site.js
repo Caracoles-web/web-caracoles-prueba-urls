@@ -68,6 +68,24 @@
     if(sidebarBottom) side.insertBefore(menuCallButton,sidebarBottom);
   }
 
+  // PDFs de carta: desktop abre en pestaña nueva; móvil abre directamente en la pantalla actual.
+  // No usamos el atributo download: dejamos que el visor PDF del navegador los muestre.
+  const pdfMedia=window.matchMedia('(max-width: 820px)');
+  const syncPdfLinks=()=>{
+    document.querySelectorAll('a[data-pdf-viewer]').forEach(link=>{
+      if(pdfMedia.matches){
+        link.removeAttribute('target');
+        link.removeAttribute('rel');
+      }else{
+        link.setAttribute('target','_blank');
+        link.setAttribute('rel','noopener');
+      }
+    });
+  };
+  syncPdfLinks();
+  if(pdfMedia.addEventListener) pdfMedia.addEventListener('change',syncPdfLinks);
+  else if(pdfMedia.addListener) pdfMedia.addListener(syncPdfLinks);
+
   document.querySelectorAll('[data-wine-slider]').forEach(slider=>{
     const slides=[...slider.querySelectorAll('.wine-slide')];
     if(slides.length<2)return;
