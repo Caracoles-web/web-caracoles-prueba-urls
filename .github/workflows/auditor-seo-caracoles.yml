@@ -1,0 +1,211 @@
+name: AUDITOR SEO CARACOLES
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auditar SEO y recursos
+        id: audit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, sys
+
+          root = Path(".")
+          errors = []
+
+          required_pages = [
+              "index.html",
+              "carta/index.html",
+              "Eventos/index.html",
+              "reservas/index.html",
+              "privacy/index.html",
+              "en/index.html",
+              "en/carta.html",
+              "en/eventos.html",
+              "en/contacto.html",
+              "en/legal.html",
+              "fr/index.html",
+              "fr/carta.html",
+              "fr/eventos.html",
+              "fr/contacto.html",
+              "fr/legal.html",
+          ]
+
+          for rel in required_pages:
+              p = root / rel
+              if not p.is_file():
+                  errors.append(f"Falta página requerida: `{rel}`")
+                  continue
+
+              html = p.read_text(encoding="utf-8", errors="replace")
+
+              if "<title" not in html.lower():
+                  errors.append(f"`{rel}` no tiene `<title>`")
+
+              if not re.search(r'<meta[^>]+name=["\']description["\']', html, re.I):
+                  errors.append(f"`{rel}` no tiene meta description")
+
+              if re.search(r'<meta[^>]+name=["\']robots["\'][^>]+noindex', html, re.I):
+                  errors.append(f"`{rel}` contiene `noindex`")
+
+              if not re.search(r'<link[^>]+rel=["\']canonical["\']', html, re.I):
+                  errors.append(f"`{rel}` no tiene canonical")
+
+              for lang in ("es", "en", "fr", "x-default"):
+                  if not re.search(
+                      rf'<link[^>]+hreflang=["\']{re.escape(lang)}["\']',
+                      html, re.I
+                  ):
+                      errors.append(f"`{rel}` carece de hreflang `{lang}`")
+
+              # Recursos locales enlazados desde href/src
+              for attr, ref in re.findall(
+                  r'\b(href|src)=["\']([^"\']+)["\']',
+                  html, re.I
+              ):
+                  ref = ref.split("#", 1)[0].split("?", 1)[0]
+                  if not ref or ref.startswith(
+                      ("http://", "https://", "mailto:", "tel:", "data:", "javascript:", "#")
+                  ):
+                      continue
+
+                  if ref.startswith("/"):
+                      target = root / ref.lstrip("/")
+                  else:
+                      target = p.parent / ref
+
+                  if target.is_dir():
+                      target = target / "index.html"
+                  elif not target.suffix:
+                      if (target / "index.html").exists():
+                          target = target / "index.html"
+                      elif target.with_suffix(".html").exists():
+                          target = target.with_suffix(".html")
+
+                  try:
+                      target = target.resolve()
+                      target.relative_to(root.resolve())
+                  except Exception:
+                      continue
+
+                  if not target.exists():
+                      errors.append(f"`{rel}` enlaza a recurso inexistente: `{ref}`")
+
+          if not (root / "robots.txt").is_file():
+              errors.append("Falta `robots.txt`")
+          else:
+              robots = (root / "robots.txt").read_text(encoding="utf-8", errors="replace")
+              if "Disallow: /" in robots:
+                  errors.append("`robots.txt` bloquea todo el sitio")
+
+          if not (root / "sitemap.xml").is_file():
+              errors.append("Falta `sitemap.xml`")
+
+          for alias in ("contact", "contacto"):
+              if (root / alias).exists():
+                  errors.append(f"Ha reaparecido la ruta histórica `/{alias}/`")
+
+          # La portada debe contener schema Restaurant
+          if (root / "index.html").is_file():
+              home = (root / "index.html").read_text(encoding="utf-8", errors="replace")
+              if '"@type": "Restaurant"' not in home and '"@type":"Restaurant"' not in home:
+                  errors.append("La portada no contiene schema `Restaurant`")
+
+          # Deduplicar
+          errors = list(dict.fromkeys(errors))
+
+          report = Path("/tmp/seo-audit-report.md")
+          if errors:
+              body = [
+                  "# AUDITOR SEO CARACOLES",
+                  "",
+                  "**Estado:** 🔴 INCIDENCIAS DETECTADAS",
+                  "",
+                  "## Problemas",
+                  "",
+              ] + [f"- {e}" for e in errors] + [
+                  "",
+                  "El auditor solo detecta y avisa. No modifica la web.",
+              ]
+              report.write_text("\n".join(body), encoding="utf-8")
+              print("\n".join(body))
+              sys.exit(1)
+          else:
+              body = [
+                  "# AUDITOR SEO CARACOLES",
+                  "",
+                  "**Estado:** 🟢 AUDITORÍA CORRECTA",
+                  "",
+                  "No se han detectado problemas.",
+                  "",
+                  "El auditor solo detecta y avisa. No modifica la web.",
+              ]
+              report.write_text("\n".join(body), encoding="utf-8")
+              print("\n".join(body))
+          PY
+
+      - name: Crear o actualizar Issue si hay problemas
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          LABEL="seo-auditor"
+          TITLE="⚠️ AUDITOR SEO CARACOLES — incidencia detectada"
+
+          gh label create "$LABEL" \
+            --color "D93F0B" \
+            --description "Incidencias detectadas automáticamente por AUDITOR SEO CARACOLES" \
+            --force >/dev/null 2>&1 || true
+
+          ISSUE="$(gh issue list \
+            --state open \
+            --label "$LABEL" \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || true)"
+
+          if [[ -n "$ISSUE" && "$ISSUE" != "null" ]]; then
+            gh issue edit "$ISSUE" \
+              --title "$TITLE" \
+              --body-file /tmp/seo-audit-report.md
+          else
+            gh issue create \
+              --title "$TITLE" \
+              --label "$LABEL" \
+              --body-file /tmp/seo-audit-report.md
+          fi
+
+      - name: Cerrar Issue cuando todo vuelva a estar bien
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          LABEL="seo-auditor"
+          ISSUE="$(gh issue list \
+            --state open \
+            --label "$LABEL" \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || true)"
+
+          if [[ -n "$ISSUE" && "$ISSUE" != "null" ]]; then
+            gh issue comment "$ISSUE" \
+              --body "✅ AUDITOR SEO CARACOLES vuelve a estar correcto. Cierro esta incidencia automáticamente."
+            gh issue close "$ISSUE"
+          fi
