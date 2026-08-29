@@ -1,4 +1,4 @@
-name: AUDITOR SEO CARACOLES
+name: AUDITOR + SEO AUTO CARACOLES
 
 on:
   push:
@@ -8,170 +8,350 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
+concurrency:
+  group: seo-caracoles
+  cancel-in-progress: false
+
 jobs:
-  audit:
+  seo:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Auditar SEO y recursos
+      # AUTO: solo acciones deterministas, seguras y reversibles.
+      # CARTAS / CARTAS DE VINOS: NUNCA se corrigen automáticamente.
+      - name: SEO AUTO seguro
+        id: autofix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          base = "https://www.asadorcaracoles.es"
+
+          urls = [
+              f"{base}/",
+              f"{base}/en/",
+              f"{base}/fr/",
+              f"{base}/carta/",
+              f"{base}/en/carta.html",
+              f"{base}/fr/carta.html",
+              f"{base}/Eventos/",
+              f"{base}/en/eventos.html",
+              f"{base}/fr/eventos.html",
+              f"{base}/reservas/",
+              f"{base}/en/contacto.html",
+              f"{base}/fr/contacto.html",
+              f"{base}/privacy/",
+              f"{base}/en/legal.html",
+              f"{base}/fr/legal.html",
+          ]
+
+          robots = (
+              "User-agent: *\n"
+              "Allow: /\n\n"
+              f"Sitemap: {base}/sitemap.xml\n"
+          )
+
+          sitemap = [
+              '<?xml version="1.0" encoding="UTF-8"?>',
+              '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+          ]
+          for url in urls:
+              sitemap += [
+                  "  <url>",
+                  f"    <loc>{url}</loc>",
+                  "  </url>",
+              ]
+          sitemap.append("</urlset>")
+          sitemap = "\n".join(sitemap) + "\n"
+
+          expected = {
+              Path("robots.txt"): robots,
+              Path("sitemap.xml"): sitemap,
+          }
+
+          changed = []
+          for path, content in expected.items():
+              current = path.read_text(encoding="utf-8") if path.exists() else None
+              if current != content:
+                  path.write_text(content, encoding="utf-8")
+                  changed.append(str(path))
+
+          Path("/tmp/seo-auto-changed.txt").write_text(
+              "\n".join(changed), encoding="utf-8"
+          )
+          PY
+
+          if [[ -s /tmp/seo-auto-changed.txt ]]; then
+            git config user.name "SEO AUTO CARACOLES"
+            git config user.email "actions@users.noreply.github.com"
+            git add robots.txt sitemap.xml
+            git commit -m "chore(seo): mantener robots y sitemap automáticamente [skip ci]"
+
+            if ! git push origin HEAD:main; then
+              echo "No se pudo guardar en GitHub la corrección automática de robots/sitemap." \
+                > /tmp/seo-auto-push-failed.txt
+            fi
+          fi
+
+      - name: Auditar SEO, URLs y recursos
         id: audit
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re, sys
+          import re
 
           root = Path(".")
-          errors = []
+          critical = []
+          warnings = []
 
-          required_pages = [
-              "index.html",
-              "carta/index.html",
-              "Eventos/index.html",
-              "reservas/index.html",
-              "privacy/index.html",
-              "en/index.html",
-              "en/carta.html",
-              "en/eventos.html",
-              "en/contacto.html",
-              "en/legal.html",
-              "fr/index.html",
-              "fr/carta.html",
-              "fr/eventos.html",
-              "fr/contacto.html",
-              "fr/legal.html",
-          ]
+          base = "https://www.asadorcaracoles.es"
 
-          for rel in required_pages:
-              p = root / rel
-              if not p.is_file():
-                  errors.append(f"Falta página requerida: `{rel}`")
+          pages = {
+              "index.html": f"{base}/",
+              "en/index.html": f"{base}/en/",
+              "fr/index.html": f"{base}/fr/",
+              "carta/index.html": f"{base}/carta/",
+              "en/carta.html": f"{base}/en/carta.html",
+              "fr/carta.html": f"{base}/fr/carta.html",
+              "Eventos/index.html": f"{base}/Eventos/",
+              "en/eventos.html": f"{base}/en/eventos.html",
+              "fr/eventos.html": f"{base}/fr/eventos.html",
+              "reservas/index.html": f"{base}/reservas/",
+              "en/contacto.html": f"{base}/en/contacto.html",
+              "fr/contacto.html": f"{base}/fr/contacto.html",
+              "privacy/index.html": f"{base}/privacy/",
+              "en/legal.html": f"{base}/en/legal.html",
+              "fr/legal.html": f"{base}/fr/legal.html",
+          }
+
+          if Path("/tmp/seo-auto-push-failed.txt").exists():
+              critical.append(
+                  "SEO AUTO corrigió `robots.txt`/`sitemap.xml` localmente, "
+                  "pero GitHub no permitió guardar el cambio automáticamente."
+              )
+
+          def local_target(page, ref):
+              ref = ref.split("#", 1)[0].split("?", 1)[0].strip()
+              if not ref or ref.startswith(
+                  ("http://", "https://", "mailto:", "tel:", "data:",
+                   "javascript:", "#")
+              ):
+                  return None, ref
+
+              target = root / ref.lstrip("/") if ref.startswith("/") else page.parent / ref
+
+              if target.is_dir():
+                  target = target / "index.html"
+              elif not target.suffix:
+                  if (target / "index.html").exists():
+                      target = target / "index.html"
+                  elif target.with_suffix(".html").exists():
+                      target = target.with_suffix(".html")
+
+              try:
+                  resolved = target.resolve()
+                  resolved.relative_to(root.resolve())
+                  return resolved, ref
+              except Exception:
+                  return None, ref
+
+          for rel, expected_canonical in pages.items():
+              page = root / rel
+
+              if not page.is_file():
+                  critical.append(f"Falta página pública obligatoria: `{rel}`")
                   continue
 
-              html = p.read_text(encoding="utf-8", errors="replace")
+              html = page.read_text(encoding="utf-8", errors="replace")
 
-              if "<title" not in html.lower():
-                  errors.append(f"`{rel}` no tiene `<title>`")
+              if not re.search(r"<title\b[^>]*>.*?</title>", html, re.I | re.S):
+                  critical.append(f"`{rel}` no tiene `<title>`.")
 
-              if not re.search(r'<meta[^>]+name=["\']description["\']', html, re.I):
-                  errors.append(f"`{rel}` no tiene meta description")
+              if not re.search(
+                  r'<meta\b[^>]*name=["\']description["\'][^>]*>',
+                  html, re.I
+              ):
+                  critical.append(f"`{rel}` no tiene meta description.")
 
-              if re.search(r'<meta[^>]+name=["\']robots["\'][^>]+noindex', html, re.I):
-                  errors.append(f"`{rel}` contiene `noindex`")
+              if re.search(
+                  r'<meta\b[^>]*name=["\']robots["\'][^>]*content=["\'][^"\']*noindex',
+                  html, re.I
+              ):
+                  critical.append(
+                      f"`{rel}` contiene `noindex`. REVISIÓN HUMANA: no se modifica automáticamente."
+                  )
 
-              if not re.search(r'<link[^>]+rel=["\']canonical["\']', html, re.I):
-                  errors.append(f"`{rel}` no tiene canonical")
+              canonicals = re.findall(
+                  r'<link\b[^>]*rel=["\']canonical["\'][^>]*href=["\']([^"\']+)["\']',
+                  html, re.I
+              )
+              if len(canonicals) != 1:
+                  critical.append(
+                      f"`{rel}` debe tener exactamente 1 canonical; encontrados: {len(canonicals)}. "
+                      "REVISIÓN HUMANA."
+                  )
+              elif canonicals[0] != expected_canonical:
+                  critical.append(
+                      f"`{rel}` tiene canonical `{canonicals[0]}` pero se espera "
+                      f"`{expected_canonical}`. REVISIÓN HUMANA."
+                  )
 
               for lang in ("es", "en", "fr", "x-default"):
                   if not re.search(
-                      rf'<link[^>]+hreflang=["\']{re.escape(lang)}["\']',
+                      rf'<link\b[^>]*hreflang=["\']{re.escape(lang)}["\']',
                       html, re.I
                   ):
-                      errors.append(f"`{rel}` carece de hreflang `{lang}`")
+                      critical.append(
+                          f"`{rel}` carece de hreflang `{lang}`. REVISIÓN HUMANA."
+                      )
 
-              # Recursos locales enlazados desde href/src
-              for attr, ref in re.findall(
+              for _, ref in re.findall(
                   r'\b(href|src)=["\']([^"\']+)["\']',
                   html, re.I
               ):
-                  ref = ref.split("#", 1)[0].split("?", 1)[0]
-                  if not ref or ref.startswith(
-                      ("http://", "https://", "mailto:", "tel:", "data:", "javascript:", "#")
-                  ):
+                  target, clean_ref = local_target(page, ref)
+                  if target is None or target.exists():
                       continue
 
-                  if ref.startswith("/"):
-                      target = root / ref.lstrip("/")
+                  # EXCEPCIÓN ABSOLUTA: todas las cartas y cartas de vinos.
+                  # Solo aviso. Nunca autocorregir, generar, sustituir ni bloquear.
+                  normalized = clean_ref.replace("\\", "/").lower()
+                  if "/cartas/" in f"/{normalized}" or normalized.startswith("assets/cartas/"):
+                      warnings.append(
+                          f"📄 CARTA/VINOS — `{rel}` enlaza a recurso inexistente: "
+                          f"`{clean_ref}`. SOLO AVISO; control humano 100%."
+                      )
                   else:
-                      target = p.parent / ref
+                      critical.append(
+                          f"`{rel}` enlaza a recurso interno inexistente: `{clean_ref}`. "
+                          "No se inventa ni sustituye automáticamente."
+                      )
 
-                  if target.is_dir():
-                      target = target / "index.html"
-                  elif not target.suffix:
-                      if (target / "index.html").exists():
-                          target = target / "index.html"
-                      elif target.with_suffix(".html").exists():
-                          target = target.with_suffix(".html")
-
-                  try:
-                      target = target.resolve()
-                      target.relative_to(root.resolve())
-                  except Exception:
-                      continue
-
-                  if not target.exists():
-                      errors.append(f"`{rel}` enlaza a recurso inexistente: `{ref}`")
-
-          if not (root / "robots.txt").is_file():
-              errors.append("Falta `robots.txt`")
-          else:
-              robots = (root / "robots.txt").read_text(encoding="utf-8", errors="replace")
-              if "Disallow: /" in robots:
-                  errors.append("`robots.txt` bloquea todo el sitio")
-
-          if not (root / "sitemap.xml").is_file():
-              errors.append("Falta `sitemap.xml`")
-
+          # Estructura histórica que no debe reaparecer.
           for alias in ("contact", "contacto"):
               if (root / alias).exists():
-                  errors.append(f"Ha reaparecido la ruta histórica `/{alias}/`")
+                  critical.append(
+                      f"Ha reaparecido la ruta histórica `/{alias}/`. REVISIÓN HUMANA."
+                  )
 
-          # La portada debe contener schema Restaurant
-          if (root / "index.html").is_file():
-              home = (root / "index.html").read_text(encoding="utf-8", errors="replace")
-              if '"@type": "Restaurant"' not in home and '"@type":"Restaurant"' not in home:
-                  errors.append("La portada no contiene schema `Restaurant`")
+          # Estos dos archivos sí están bajo AUTO y ya se han normalizado antes.
+          if not (root / "robots.txt").is_file():
+              critical.append("Falta `robots.txt` incluso después de SEO AUTO.")
+          if not (root / "sitemap.xml").is_file():
+              critical.append("Falta `sitemap.xml` incluso después de SEO AUTO.")
 
-          # Deduplicar
-          errors = list(dict.fromkeys(errors))
+          # Schema: importante; se audita pero nunca se reescribe solo.
+          home = root / "index.html"
+          if home.is_file():
+              text = home.read_text(encoding="utf-8", errors="replace")
+              if (
+                  '"@type": "Restaurant"' not in text
+                  and '"@type":"Restaurant"' not in text
+              ):
+                  critical.append(
+                      "La portada no contiene schema `Restaurant`. REVISIÓN HUMANA."
+                  )
 
-          report = Path("/tmp/seo-audit-report.md")
-          if errors:
-              body = [
-                  "# AUDITOR SEO CARACOLES",
-                  "",
-                  "**Estado:** 🔴 INCIDENCIAS DETECTADAS",
-                  "",
-                  "## Problemas",
-                  "",
-              ] + [f"- {e}" for e in errors] + [
-                  "",
-                  "El auditor solo detecta y avisa. No modifica la web.",
-              ]
-              report.write_text("\n".join(body), encoding="utf-8")
-              print("\n".join(body))
-              sys.exit(1)
+          critical = list(dict.fromkeys(critical))
+          warnings = list(dict.fromkeys(warnings))
+
+          if critical:
+              status = "critical"
+          elif warnings:
+              status = "warning"
           else:
-              body = [
-                  "# AUDITOR SEO CARACOLES",
+              status = "ok"
+
+          body = [
+              "# AUDITOR + SEO AUTO CARACOLES",
+              "",
+              f"**Estado:** {status.upper()}",
+              "",
+          ]
+
+          if critical:
+              body += [
+                  "## 🔴 Requiere revisión humana",
                   "",
-                  "**Estado:** 🟢 AUDITORÍA CORRECTA",
+                  *[f"- {x}" for x in critical],
                   "",
-                  "No se han detectado problemas.",
-                  "",
-                  "El auditor solo detecta y avisa. No modifica la web.",
               ]
-              report.write_text("\n".join(body), encoding="utf-8")
-              print("\n".join(body))
+
+          if warnings:
+              body += [
+                  "## 🟡 Avisos — CARTAS / CARTAS DE VINOS",
+                  "",
+                  *[f"- {x}" for x in warnings],
+                  "",
+                  "**Regla:** las cartas y cartas de vinos nunca se modifican "
+                  "automáticamente. El aviso no bloquea la publicación.",
+                  "",
+              ]
+
+          changed_file = Path("/tmp/seo-auto-changed.txt")
+          changed = (
+              changed_file.read_text(encoding="utf-8").strip().splitlines()
+              if changed_file.exists()
+              else []
+          )
+          if changed:
+              body += [
+                  "## 🤖 SEO AUTO aplicado",
+                  "",
+                  *[f"- Normalizado automáticamente: `{x}`" for x in changed],
+                  "",
+              ]
+
+          body += [
+              "## Política",
+              "",
+              "- AUTO solo para acciones deterministas, seguras y reversibles.",
+              "- URLs, 301, canonical, noindex, contenido SEO y schema estratégico: revisión humana.",
+              "- Cartas y cartas de vinos: control humano 100%; solo aviso.",
+              "",
+          ]
+
+          Path("/tmp/seo-audit-report.md").write_text(
+              "\n".join(body), encoding="utf-8"
+          )
+
+          with open(Path("/tmp/audit-status.txt"), "w", encoding="utf-8") as f:
+              f.write(status)
+
+          print("\n".join(body))
           PY
 
-      - name: Crear o actualizar Issue si hay problemas
-        if: failure()
+          STATUS="$(cat /tmp/audit-status.txt)"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Crear o actualizar Issue
+        if: steps.audit.outputs.status != 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           LABEL="seo-auditor"
-          TITLE="⚠️ AUDITOR SEO CARACOLES — incidencia detectada"
+
+          if [[ "${{ steps.audit.outputs.status }}" == "warning" ]]; then
+            TITLE="🟡 AUDITOR SEO CARACOLES — aviso de cartas/vinos"
+            COLOR="FBCA04"
+          else
+            TITLE="⚠️ AUDITOR SEO CARACOLES — incidencia detectada"
+            COLOR="D93F0B"
+          fi
 
           gh label create "$LABEL" \
-            --color "D93F0B" \
-            --description "Incidencias detectadas automáticamente por AUDITOR SEO CARACOLES" \
+            --color "$COLOR" \
+            --description "Avisos automáticos del sistema SEO de Caracoles" \
             --force >/dev/null 2>&1 || true
 
           ISSUE="$(gh issue list \
@@ -191,8 +371,8 @@ jobs:
               --body-file /tmp/seo-audit-report.md
           fi
 
-      - name: Cerrar Issue cuando todo vuelva a estar bien
-        if: success()
+      - name: Cerrar Issue cuando todo esté correcto
+        if: steps.audit.outputs.status == 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -206,6 +386,12 @@ jobs:
 
           if [[ -n "$ISSUE" && "$ISSUE" != "null" ]]; then
             gh issue comment "$ISSUE" \
-              --body "✅ AUDITOR SEO CARACOLES vuelve a estar correcto. Cierro esta incidencia automáticamente."
+              --body "✅ AUDITOR + SEO AUTO CARACOLES vuelve a estar correcto."
             gh issue close "$ISSUE"
           fi
+
+      # Los avisos de cartas/vinos NO ponen el workflow en rojo.
+      - name: Marcar incidencia crítica
+        if: steps.audit.outputs.status == 'critical'
+        shell: bash
+        run: exit 1
