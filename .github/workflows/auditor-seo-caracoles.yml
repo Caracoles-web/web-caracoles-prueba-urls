@@ -150,7 +150,7 @@ jobs:
           if mode=="full":
               if not (root/"robots.txt").is_file(): critical.append("Falta `robots.txt`.")
               if not (root/"sitemap.xml").is_file(): critical.append("Falta `sitemap.xml`.")
-                            aliases={
+              aliases={
                   "menu":("../carta/","https://www.asadorcaracoles.es/carta/"),
                   "contact":("../reservas/","https://www.asadorcaracoles.es/reservas/"),
                   "contacto":("../reservas/","https://www.asadorcaracoles.es/reservas/"),
