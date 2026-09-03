@@ -1939,3 +1939,33 @@ body{
     display:none;
   }
 }
+
+/* ===== HOME · SLIDER PORTADA · CONFIGURACIÓN CANÓNICA 2026-09-03 =====
+   Desktop: 100vh, sin límite máximo y cover, manteniendo el ancho disponible.
+   Scroll: mismo comportamiento de fondo fijo que Carta & Vinos en desktop.
+   Mobile/tablet táctil y reduced-motion conservan background-attachment:scroll. */
+@media (min-width:821px){
+  .home-slider{
+    height:100vh;
+    max-height:none;
+    min-height:0;
+  }
+  .home-slider .slide{
+    background-size:cover;
+  }
+}
+@media (min-width:981px){
+  .home-slider .slide{
+    background-attachment:fixed;
+  }
+}
+@media (max-width:980px), (prefers-reduced-motion:reduce){
+  .home-slider .slide{
+    background-attachment:scroll;
+  }
+}
+@media (min-width:821px) and (max-width:1366px) and (pointer:coarse){
+  .home-slider .slide{
+    background-attachment:scroll!important;
+  }
+}
