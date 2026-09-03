@@ -150,9 +150,20 @@ jobs:
           if mode=="full":
               if not (root/"robots.txt").is_file(): critical.append("Falta `robots.txt`.")
               if not (root/"sitemap.xml").is_file(): critical.append("Falta `sitemap.xml`.")
-              for alias in ("contact","contacto"):
-                  if (root/alias).exists():
-                      critical.append(f"Ha reaparecido `/{alias}/`. REVISIÓN HUMANA.")
+                            aliases={
+                  "menu":("../carta/","https://www.asadorcaracoles.es/carta/"),
+                  "contact":("../reservas/","https://www.asadorcaracoles.es/reservas/"),
+                  "contacto":("../reservas/","https://www.asadorcaracoles.es/reservas/"),
+                  "private-events":("../Eventos/","https://www.asadorcaracoles.es/Eventos/"),
+              }
+              for alias,(target,canonical) in aliases.items():
+                  p=root/alias/"index.html"
+                  if not p.is_file():
+                      critical.append(f"Falta alias técnico `/{alias}/`.")
+                      continue
+                  alias_html=p.read_text(encoding="utf-8",errors="replace")
+                  if canonical not in alias_html or target not in alias_html:
+                      critical.append(f"Alias técnico `/{alias}/` requiere revisión humana.")
               home=(root/"index.html").read_text(encoding="utf-8",errors="replace")
               if '"@type": "Restaurant"' not in home and '"@type":"Restaurant"' not in home:
                   critical.append("Falta schema `Restaurant`. REVISIÓN HUMANA.")
